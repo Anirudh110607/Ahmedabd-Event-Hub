@@ -1,0 +1,2358 @@
+import React, { useState, useEffect } from 'react';
+import api from '../api/api';
+import { useAuth } from '../context/AuthContext';
+import { motion, AnimatePresence } from 'framer-motion';
+import { 
+  Users, Calendar, Shield, IndianRupee, Activity, FileText, Send, 
+  Check, X, Search, Filter, ShieldAlert, Award, Home, Lock, Unlock, 
+  RefreshCw, AlertCircle, Eye, CornerDownRight, Landmark, MessageSquare, Trash, Building, Ticket, Mail, History
+} from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { WS_URL, BACKEND_URL } from '../api/api';
+import EventDetailModal from '../components/EventDetailModal';
+import VenueDetailModal from '../components/VenueDetailModal';
+
+const AdminDashboard = () => {
+  const { user } = useAuth();
+  const routeLocation = useLocation();
+  const navigate = useNavigate();
+  const currentPath = (routeLocation.pathname || '').replace(/\/+$/, '').toLowerCase();
+  const activeTab = currentPath.includes('approvals')
+    ? 'approvals'
+    : currentPath.includes('events')
+      ? 'all_events'
+      : currentPath.includes('venues')
+        ? 'all_venues'
+        : currentPath.includes('revenue')
+          ? 'platform_revenue'
+          : currentPath.includes('users')
+            ? 'users'
+            : currentPath.includes('finance')
+              ? 'finance'
+              : currentPath.includes('complaints')
+                ? 'complaints'
+                : currentPath.includes('broadcast')
+                  ? 'broadcast'
+                  : 'overview';
+  const setActiveTab = (tabId) => {
+    const paths = {
+      overview: '/admin/overview',
+      platform_revenue: '/admin/revenue',
+      approvals: '/admin/approvals',
+      all_events: '/admin/events',
+      all_venues: '/admin/venues',
+      users: '/admin/users',
+      finance: '/admin/finance',
+      complaints: '/admin/complaints',
+      broadcast: '/admin/broadcast'
+    };
+    navigate(paths[tabId] || '/admin/overview');
+  };
+  const [loading, setLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  
+  // Dashboard Data States
+  const [summary, setSummary] = useState(null);
+  const [usersList, setUsersList] = useState([]);
+  const [pendingEvents, setPendingEvents] = useState([]);
+  const [pendingVenues, setPendingVenues] = useState([]);
+  const [bookingsList, setBookingsList] = useState([]);
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [allEvents, setAllEvents] = useState([]);
+  const [eventSearch, setEventSearch] = useState('');
+  const [allVenues, setAllVenues] = useState([]);
+  const [venueSearch, setVenueSearch] = useState('');
+  const [eventsPage, setEventsPage] = useState(1);
+  const [venuesPage, setVenuesPage] = useState(1);
+  const itemsPerPage = 10;
+
+  // Search & Filter States
+  const [userSearch, setUserSearch] = useState('');
+  const [userRoleFilter, setUserRoleFilter] = useState('');
+  const [bookingSearch, setBookingSearch] = useState('');
+  const [bookingStatusFilter, setBookingStatusFilter] = useState('');
+  const [auditSearch, setAuditSearch] = useState('');
+  const [auditActionFilter, setAuditActionFilter] = useState('');
+
+  // Broadcast Form State
+  const [broadcastTitle, setBroadcastTitle] = useState('');
+  const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [broadcastSuccess, setBroadcastSuccess] = useState('');
+
+  // Complaints States
+  const [complaintsList, setComplaintsList] = useState([]);
+  const [complaintSearch, setComplaintSearch] = useState('');
+  const [complaintRoleFilter, setComplaintRoleFilter] = useState('');
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [replyMessage, setReplyMessage] = useState('');
+
+  // Feedback State
+  const [feedbackMsg, setFeedbackMsg] = useState(null);
+
+  // Refund Modal State
+  const [refundModal, setRefundModal] = useState({ show: false, booking: null });
+  const [liveSales, setLiveSales] = useState([]);
+
+  // Inspection Detail Modal State for Events and Venues
+  const [detailModalItem, setDetailModalItem] = useState(null);
+  const [previewEvent, setPreviewEvent] = useState(null);
+  const [previewVenue, setPreviewVenue] = useState(null);
+
+  // Connect to Live Ticket Purchases WebSocket
+  useEffect(() => {
+    const wsUrl = `${WS_URL}/ws/live-tickets/`;
+    const ws = new WebSocket(wsUrl);
+    
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        setLiveSales((prev) => {
+          if (prev.some(sale => sale.booking_id === data.booking_id)) {
+            return prev;
+          }
+          return [data, ...prev].slice(0, 10);
+        });
+      } catch (err) {
+        console.error("Failed to parse live ticket purchase:", err);
+      }
+    };
+    
+    ws.onerror = (err) => {
+      console.error("Live tickets WebSocket error:", err);
+    };
+    
+    return () => {
+      ws.close();
+    };
+  }, []);
+
+  // Styled Confirm Modal State
+  const [confirmModal, setConfirmModal] = useState({
+    show: false,
+    title: '',
+    message: '',
+    onConfirm: null
+  });
+
+  // Direct Message Modal State
+  const [messageUserModal, setMessageUserModal] = useState({
+    show: false,
+    user: null,
+    title: '',
+    message: '',
+    loading: false,
+    error: '',
+    success: ''
+  });
+
+  const [userMessageHistory, setUserMessageHistory] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
+  const openMessageModal = async (u) => {
+    setMessageUserModal({
+      show: true,
+      user: u,
+      title: '',
+      message: '',
+      loading: false,
+      error: '',
+      success: ''
+    });
+    setUserMessageHistory([]);
+    setLoadingHistory(true);
+    try {
+      const res = await api.get(`admin/users/${u.id}/message/`);
+      setUserMessageHistory(res.data || []);
+    } catch (err) {
+      console.error("Failed to load message history:", err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  const handleSendDirectMessage = async (e) => {
+    e.preventDefault();
+    if (!messageUserModal.user || !messageUserModal.message.trim()) return;
+
+    setMessageUserModal(prev => ({ ...prev, loading: true, error: '', success: '' }));
+    try {
+      const res = await api.post(`admin/users/${messageUserModal.user.id}/message/`, {
+        title: messageUserModal.title.trim() || 'Direct Message from EventHub Administrator',
+        message: messageUserModal.message.trim()
+      });
+      setMessageUserModal(prev => ({ ...prev, success: res.data.message || 'Direct message sent successfully!', loading: false, title: '', message: '' }));
+      // Fetch the updated history
+      try {
+        const historyRes = await api.get(`admin/users/${messageUserModal.user.id}/message/`);
+        setUserMessageHistory(historyRes.data || []);
+      } catch (err) {
+        console.error("Failed to refresh message history:", err);
+      }
+    } catch (err) {
+      console.error("Failed to send direct message:", err);
+      setMessageUserModal(prev => ({ ...prev, error: err.response?.data?.error || 'Failed to send message.', loading: false }));
+    }
+  };
+
+  const fetchSummary = async () => {
+    try {
+      const res = await api.get('admin/summary/');
+      setSummary(res.data);
+      if (res.data.recent_live_bookings) {
+        setLiveSales(res.data.recent_live_bookings);
+      }
+    } catch (err) {
+      console.error("Failed to load summary stats:", err);
+      showFeedback("Failed to load dashboard metrics.", "error");
+    }
+  };
+
+  const fetchUsers = async () => {
+    try {
+      let url = 'admin/users/';
+      const params = [];
+      if (userSearch) params.push(`search=${userSearch}`);
+      if (userRoleFilter) params.push(`role=${userRoleFilter}`);
+      if (params.length) url += `?${params.join('&')}`;
+      
+      const res = await api.get(url);
+      const data = Array.isArray(res.data) ? res.data : (res.data?.results || []);
+      setUsersList(data);
+    } catch (err) {
+      console.error("Failed to load users:", err);
+      setUsersList([]);
+    }
+  };
+
+  const fetchApprovals = async () => {
+    try {
+      const [eventsRes, venuesRes] = await Promise.all([
+        api.get('admin/events/'),
+        api.get('admin/venues/')
+      ]);
+      setPendingEvents(Array.isArray(eventsRes.data) ? eventsRes.data : (eventsRes.data?.results || []));
+      setPendingVenues(Array.isArray(venuesRes.data) ? venuesRes.data : (venuesRes.data?.results || []));
+    } catch (err) {
+      console.error("Failed to load pending approvals:", err);
+    }
+  };
+
+  const fetchAllEvents = async () => {
+    try {
+      let url = 'events/listings/?page_size=1000';
+      if (eventSearch) {
+        url += `&search=${eventSearch}`;
+      }
+      const res = await api.get(url);
+      const data = Array.isArray(res.data) ? res.data : (res.data?.results || []);
+      setAllEvents(data);
+    } catch (err) {
+      console.error("Failed to load all events:", err);
+    }
+  };
+
+  const fetchAllVenues = async () => {
+    try {
+      let url = 'venues/listings/';
+      if (venueSearch) {
+        url += `?search=${venueSearch}`;
+      }
+      const res = await api.get(url);
+      const data = Array.isArray(res.data) ? res.data : (res.data?.results || []);
+      setAllVenues(data);
+    } catch (err) {
+      console.error("Failed to load all venues:", err);
+    }
+  };
+
+  const fetchBookings = async () => {
+    try {
+      let url = 'admin/bookings/';
+      const params = [];
+      if (bookingSearch) params.push(`search=${bookingSearch}`);
+      if (bookingStatusFilter) params.push(`status=${bookingStatusFilter}`);
+      if (params.length) url += `?${params.join('&')}`;
+      
+      const res = await api.get(url);
+      const data = Array.isArray(res.data) ? res.data : (res.data?.results || []);
+      setBookingsList(data);
+    } catch (err) {
+      console.error("Failed to load bookings list:", err);
+      setBookingsList([]);
+    }
+  };
+
+  const fetchAuditLogs = async () => {
+    try {
+      let url = 'admin/audit-logs/';
+      const params = [];
+      if (auditSearch) params.push(`search=${auditSearch}`);
+      if (auditActionFilter) params.push(`action=${auditActionFilter}`);
+      if (params.length) url += `?${params.join('&')}`;
+      
+      const res = await api.get(url);
+      const data = Array.isArray(res.data) ? res.data : (res.data?.results || []);
+      setAuditLogs(data);
+    } catch (err) {
+      console.error("Failed to load audit logs:", err);
+      setAuditLogs([]);
+    }
+  };
+
+  const fetchComplaints = async () => {
+    try {
+      let url = 'admin/complaints/';
+      const params = [];
+      if (complaintSearch) params.push(`search=${complaintSearch}`);
+      if (complaintRoleFilter) params.push(`role=${complaintRoleFilter}`);
+      if (params.length) url += `?${params.join('&')}`;
+      
+      const res = await api.get(url);
+      const data = Array.isArray(res.data) ? res.data : (res.data?.results || []);
+      setComplaintsList(data);
+    } catch (err) {
+      console.error("Failed to load complaints:", err);
+      setComplaintsList([]);
+    }
+  };
+
+  const loadTabContent = async () => {
+    try {
+      if (activeTab === 'overview' || activeTab === 'platform_revenue') {
+        await fetchSummary();
+      } else if (activeTab === 'approvals') {
+        await fetchApprovals();
+        await fetchUsers(); // Users are checked for pending registrations
+      } else if (activeTab === 'all_events') {
+        await fetchAllEvents();
+      } else if (activeTab === 'all_venues') {
+        await fetchAllVenues();
+      } else if (activeTab === 'users') {
+        await fetchUsers();
+      } else if (activeTab === 'finance') {
+        await fetchBookings();
+      } else if (activeTab === 'complaints') {
+        await fetchComplaints();
+      }
+    } catch (err) {
+      console.error("Error loading tab content:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
+
+  useEffect(() => {
+    loadTabContent();
+  }, [activeTab]);
+
+  // Handle Search triggers
+  useEffect(() => {
+    if (activeTab === 'users') fetchUsers();
+  }, [userSearch, userRoleFilter]);
+
+  useEffect(() => {
+    setEventsPage(1);
+    if (activeTab === 'all_events') fetchAllEvents();
+  }, [eventSearch]);
+
+  useEffect(() => {
+    setVenuesPage(1);
+    if (activeTab === 'all_venues') fetchAllVenues();
+  }, [venueSearch]);
+
+  useEffect(() => {
+    if (activeTab === 'finance') fetchBookings();
+  }, [bookingSearch, bookingStatusFilter]);
+
+  useEffect(() => {
+    if (activeTab === 'complaints') fetchComplaints();
+  }, [complaintSearch, complaintRoleFilter]);
+
+  const showFeedback = (text, type = 'success') => {
+    setFeedbackMsg({ text, type });
+    setTimeout(() => setFeedbackMsg(null), 4000);
+  };
+
+  // Admin Actions
+  const handleUserBlockToggle = async (userId) => {
+    setActionLoading(`block-${userId}`);
+    try {
+      const res = await api.post(`admin/users/${userId}/toggle-active/`);
+      showFeedback(res.data.message);
+      fetchUsers();
+    } catch (err) {
+      showFeedback("Failed to update user block status.", "error");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleUserApprove = async (userId) => {
+    setActionLoading(`approve-user-${userId}`);
+    try {
+      const res = await api.post(`admin/users/${userId}/approve/`);
+      showFeedback(res.data.message);
+      fetchApprovals();
+      fetchUsers();
+      fetchSummary();
+    } catch (err) {
+      showFeedback("Failed to approve organizer/owner account.", "error");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleEventApproval = async (eventId, decision) => {
+    setActionLoading(`event-${eventId}`);
+    try {
+      const res = await api.post(`admin/events/${eventId}/decision/`, { decision });
+      showFeedback(res.data.message);
+      fetchApprovals();
+      fetchAllEvents();
+      fetchSummary();
+    } catch (err) {
+      showFeedback("Failed to process event decision.", "error");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleEventDelete = (eventId) => {
+    setConfirmModal({
+      show: true,
+      title: 'Delete Event',
+      message: 'Are you sure you want to permanently delete this event? This action cannot be undone.',
+      onConfirm: async () => {
+        setActionLoading(`delete-event-${eventId}`);
+        try {
+          await api.delete(`events/listings/${eventId}/`);
+          showFeedback("Event deleted successfully.");
+          fetchAllEvents();
+          fetchSummary();
+        } catch (err) {
+          showFeedback("Failed to delete event.", "error");
+        } finally {
+          setActionLoading(null);
+        }
+      }
+    });
+  };
+
+  const handleVenueApproval = async (venueId, decision) => {
+    setActionLoading(`venue-${venueId}`);
+    try {
+      const res = await api.post(`admin/venues/${venueId}/decision/`, { decision });
+      showFeedback(res.data.message);
+      fetchApprovals();
+      fetchAllVenues();
+      fetchSummary();
+    } catch (err) {
+      showFeedback("Failed to process venue decision.", "error");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleVenueDelete = (venueId) => {
+    setConfirmModal({
+      show: true,
+      title: 'Delete Venue',
+      message: 'Are you sure you want to permanently delete this venue? This action cannot be undone.',
+      onConfirm: async () => {
+        setActionLoading(`delete-venue-${venueId}`);
+        try {
+          await api.delete(`venues/listings/${venueId}/`);
+          showFeedback("Venue deleted successfully.");
+          fetchAllVenues();
+          fetchSummary();
+        } catch (err) {
+          showFeedback("Failed to delete venue.", "error");
+        } finally {
+          setActionLoading(null);
+        }
+      }
+    });
+  };
+
+
+
+  const handleIssueRefund = async (bookingId) => {
+    setActionLoading(`refund-${bookingId}`);
+    try {
+      const res = await api.post(`admin/bookings/${bookingId}/refund/`);
+      showFeedback(res.data.message);
+      setRefundModal({ show: false, booking: null });
+      fetchBookings();
+      fetchSummary();
+    } catch (err) {
+      showFeedback(err.response?.data?.error || "Failed to issue refund.", "error");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleSendBroadcast = async (e) => {
+    e.preventDefault();
+    if (!broadcastTitle.trim() || !broadcastMessage.trim()) return;
+    
+    setActionLoading('broadcast');
+    setBroadcastSuccess('');
+    try {
+      const res = await api.post('admin/broadcast/', {
+        title: broadcastTitle,
+        message: broadcastMessage
+      });
+      setBroadcastSuccess(res.data.message);
+      setBroadcastTitle('');
+      setBroadcastMessage('');
+      showFeedback("Broadcast alert dispatched successfully!");
+    } catch (err) {
+      showFeedback("Failed to send broadcast alert.", "error");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleComplaintDelete = (complaintId) => {
+    setConfirmModal({
+      show: true,
+      title: 'Delete Complaint',
+      message: 'Are you sure you want to permanently delete this complaint ticket? This action cannot be undone.',
+      onConfirm: async () => {
+        setActionLoading(`delete-complaint-${complaintId}`);
+        try {
+          await api.delete(`admin/complaints/${complaintId}/`);
+          showFeedback("Complaint deleted successfully.");
+          fetchComplaints();
+        } catch (err) {
+          showFeedback("Failed to delete complaint.", "error");
+        } finally {
+          setActionLoading(null);
+        }
+      }
+    });
+  };
+
+  const handleSendReply = async (e) => {
+    e.preventDefault();
+    if (!replyMessage.trim() || !replyingTo) return;
+
+    setActionLoading(`reply-${replyingTo.id}`);
+    try {
+      const res = await api.post(`admin/complaints/${replyingTo.id}/reply/`, {
+        message: replyMessage
+      });
+      showFeedback(res.data.message);
+      setReplyingTo(null);
+      setReplyMessage('');
+      fetchComplaints();
+    } catch (err) {
+      showFeedback(err.response?.data?.error || "Failed to send reply.", "error");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // Helper to draw SVG Charts cleanly
+  const renderSVGLineChart = (data, valueKey, strokeColor, isFinance = false) => {
+    if (!data || data.length === 0) return null;
+    
+    const width = 500;
+    const height = 150;
+    const padding = 20;
+    
+    const values = data.map(d => d[valueKey]);
+    const maxVal = Math.max(...values, 10);
+    const minVal = Math.min(...values, 0);
+    const range = maxVal - minVal;
+    
+    const getX = (index) => padding + (index * (width - padding * 2)) / (data.length - 1);
+    const getY = (val) => height - padding - ((val - minVal) * (height - padding * 2)) / range;
+    
+    let pathD = '';
+    let areaD = `M ${getX(0)} ${height - padding}`;
+    
+    data.forEach((d, idx) => {
+      const x = getX(idx);
+      const y = getY(d[valueKey]);
+      if (idx === 0) {
+        pathD = `M ${x} ${y}`;
+      } else {
+        pathD += ` L ${x} ${y}`;
+      }
+      areaD += ` L ${x} ${y}`;
+    });
+    areaD += ` L ${getX(data.length - 1)} ${height - padding} Z`;
+    
+    return (
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-40">
+        <defs>
+          <linearGradient id={`grad-${valueKey}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={strokeColor} stopOpacity="0.2"/>
+            <stop offset="100%" stopColor={strokeColor} stopOpacity="0.0"/>
+          </linearGradient>
+        </defs>
+        {/* Grid lines */}
+        <line x1={padding} y1={padding} x2={width - padding} y2={padding} stroke="rgba(255,255,255,0.05)" />
+        <line x1={padding} y1={height / 2} x2={width - padding} y2={height / 2} stroke="rgba(255,255,255,0.05)" />
+        <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="rgba(255,255,255,0.1)" />
+        
+        {/* Fill Area */}
+        <path d={areaD} fill={`url(#grad-${valueKey})`} />
+        
+        {/* Stroke Line */}
+        <path d={pathD} fill="none" stroke={strokeColor} strokeWidth="2.5" strokeLinecap="round" />
+        
+        {/* Min/Max value indicator */}
+        <text x={padding + 5} y={padding + 10} fill="#6b7280" fontSize="8" fontWeight="bold">
+          {isFinance ? `₹${maxVal}` : maxVal}
+        </text>
+        <text x={padding + 5} y={height - padding - 5} fill="#6b7280" fontSize="8" fontWeight="bold">
+          {isFinance ? `₹${minVal}` : minVal}
+        </text>
+      </svg>
+    );
+  };
+
+  const paginatedEvents = allEvents.slice((eventsPage - 1) * itemsPerPage, eventsPage * itemsPerPage);
+  const totalEventPages = Math.ceil(allEvents.length / itemsPerPage);
+
+  const paginatedVenues = allVenues.slice((venuesPage - 1) * itemsPerPage, venuesPage * itemsPerPage);
+  const totalVenuePages = Math.ceil(allVenues.length / itemsPerPage);
+
+  const renderPagination = (currentPage, totalPages, onPageChange, totalItems) => {
+    if (totalItems === 0) return null;
+    
+    const startItem = (currentPage - 1) * itemsPerPage + 1;
+    const endItem = Math.min(currentPage * itemsPerPage, totalItems);
+    const pagesCount = Math.max(totalPages, 1);
+
+    return (
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-white/5 text-xs text-dark-muted font-semibold mt-4">
+        <div>
+          Showing <span className="text-white">{startItem}</span> to <span className="text-white">{endItem}</span> of <span className="text-white">{totalItems}</span> entries
+        </div>
+        <div className="flex items-center space-x-1">
+          <button
+            onClick={() => onPageChange(Math.max(currentPage - 1, 1))}
+            disabled={currentPage === 1}
+            className="px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-white disabled:opacity-40 disabled:hover:bg-white/5 transition-all"
+          >
+            Previous
+          </button>
+          {[...Array(pagesCount)].map((_, i) => {
+            const pageNum = i + 1;
+            if (pagesCount > 6 && Math.abs(currentPage - pageNum) > 2 && pageNum !== 1 && pageNum !== pagesCount) {
+              if (pageNum === 2 || pageNum === pagesCount - 1) {
+                return <span key={pageNum} className="px-2">...</span>;
+              }
+              return null;
+            }
+            return (
+              <button
+                key={pageNum}
+                onClick={() => onPageChange(pageNum)}
+                className={`w-8 h-8 rounded-lg transition-all ${
+                  currentPage === pageNum
+                    ? 'bg-red-500 text-white font-bold'
+                    : 'bg-white/5 hover:bg-white/10 text-dark-text'
+                }`}
+              >
+                {pageNum}
+              </button>
+            );
+          })}
+          <button
+            onClick={() => onPageChange(Math.min(currentPage + 1, pagesCount))}
+            disabled={currentPage === pagesCount}
+            className="px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-white disabled:opacity-40 disabled:hover:bg-white/5 transition-all"
+          >
+            Next
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="w-full px-4 sm:px-6 lg:px-12 py-10">
+      
+      {/* Toast Alert Feedback */}
+      <AnimatePresence>
+        {feedbackMsg && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            className={`fixed top-24 right-6 z-50 px-5 py-3.5 rounded-xl border shadow-xl flex items-center space-x-3 backdrop-blur-md ${
+              feedbackMsg.type === 'error'
+                ? 'bg-red-500/10 border-red-500/35 text-red-400'
+                : 'bg-emerald-500/10 border-emerald-500/35 text-emerald-400'
+            }`}
+          >
+            <AlertCircle className="w-5 h-5 flex-shrink-0" />
+            <span className="text-sm font-semibold">{feedbackMsg.text}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Header section */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
+        <div>
+          <div className="flex items-center space-x-2 text-red-400 font-bold uppercase tracking-wider text-xs">
+            <Shield className="w-4 h-4" />
+            <span>Platform Administration Security Control</span>
+          </div>
+          <h1 className="text-3xl font-extrabold text-white mt-1 tracking-tight">Admin Dashboard</h1>
+        </div>
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={loadTabContent}
+            className="flex items-center space-x-2 bg-white/5 hover:bg-white/10 text-dark-text border border-white/5 px-4 py-2.5 rounded-xl transition-all text-sm font-bold"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <span>Sync Panel Data</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Viewport Panels */}
+      <div className="w-full min-h-[500px]">
+          
+          {loading ? (
+            <div className="glass-panel border border-white/10 rounded-2xl p-16 flex flex-col items-center justify-center space-y-4">
+              <div className="w-12 h-12 border-4 border-red-500/20 border-t-red-400 rounded-full animate-spin"></div>
+              <p className="text-dark-muted text-sm font-semibold">Synchronizing systems analytics records...</p>
+            </div>
+          ) : (
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activeTab}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.15 }}
+                className="space-y-8"
+              >
+
+                {/* TAB: OVERVIEW */}
+                {activeTab === 'overview' && summary && (
+                  <div className="space-y-8">
+                    
+                    {/* Stat boxes */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-6">
+                      
+                      <div className="glass-panel border border-white/10 rounded-2xl p-5 shadow-lg">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs text-dark-muted font-bold uppercase tracking-wider">Total Booking Revenue</p>
+                          <div className="w-9 h-9 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/20">
+                            <Landmark className="w-4.5 h-4.5" />
+                          </div>
+                        </div>
+                        <h2 className="text-2xl font-extrabold text-white mt-3">₹{summary.finance.revenue.toLocaleString()}</h2>
+                        <p className="text-[10px] text-white font-semibold mt-1 flex items-center">
+                          <span>Verified Razorpay receipts</span>
+                        </p>
+                      </div>
+
+                      <div className="glass-panel border border-white/10 rounded-2xl p-5 shadow-lg">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs text-dark-muted font-bold uppercase tracking-wider">Total Tickets Sold</p>
+                          <div className="w-9 h-9 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center border border-amber-500/20">
+                            <Ticket className="w-4.5 h-4.5" />
+                          </div>
+                        </div>
+                        <h2 className="text-2xl font-extrabold text-white mt-3">{summary.finance.total_tickets_sold || 0}</h2>
+                        <p className="text-[10px] text-dark-muted font-semibold mt-1">Individual tickets sold</p>
+                      </div>
+
+                      <div className="glass-panel border border-white/10 rounded-2xl p-5 shadow-lg">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs text-dark-muted font-bold uppercase tracking-wider">Active Bookings</p>
+                          <div className="w-9 h-9 rounded-lg bg-blue-500/10 text-blue-400 flex items-center justify-center border border-blue-500/20">
+                            <Calendar className="w-4.5 h-4.5" />
+                          </div>
+                        </div>
+                        <h2 className="text-2xl font-extrabold text-white mt-3">{summary.finance.bookings_count}</h2>
+                        <p className="text-[10px] text-dark-muted font-semibold mt-1">Confirmed event seats reserved</p>
+                      </div>
+
+                      <div className="glass-panel border border-white/10 rounded-2xl p-5 shadow-lg">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs text-dark-muted font-bold uppercase tracking-wider">Total Events</p>
+                          <div className="w-9 h-9 rounded-lg bg-pink-500/10 text-pink-400 flex items-center justify-center border border-pink-500/20">
+                            <Calendar className="w-4.5 h-4.5" />
+                          </div>
+                        </div>
+                        <h2 className="text-2xl font-extrabold text-white mt-3">{summary.total_events || 0}</h2>
+                        <p className="text-[10px] text-dark-muted font-semibold mt-1">Registered events in system</p>
+                      </div>
+
+                      <div className="glass-panel border border-white/10 rounded-2xl p-5 shadow-lg">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs text-dark-muted font-bold uppercase tracking-wider">Total Venues</p>
+                          <div className="w-9 h-9 rounded-lg bg-teal-500/10 text-teal-400 flex items-center justify-center border border-teal-500/20">
+                            <Building className="w-4.5 h-4.5" />
+                          </div>
+                        </div>
+                        <h2 className="text-2xl font-extrabold text-white mt-3">{summary.total_venues || 0}</h2>
+                        <p className="text-[10px] text-dark-muted font-semibold mt-1">Registered venue plots</p>
+                      </div>
+
+                      <div className="glass-panel border border-white/10 rounded-2xl p-5 shadow-lg">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs text-dark-muted font-bold uppercase tracking-wider">Total Venues Booked</p>
+                          <div className="w-9 h-9 rounded-lg bg-blue-500/10 text-blue-400 flex items-center justify-center border border-blue-500/20">
+                            <Building className="w-4.5 h-4.5" />
+                          </div>
+                        </div>
+                        <h2 className="text-2xl font-extrabold text-white mt-3">{summary.finance.venue_bookings_count || 0}</h2>
+                        <p className="text-[10px] text-dark-muted font-semibold mt-1">Approved venue hire slots</p>
+                      </div>
+
+                      <div className="glass-panel border border-white/10 rounded-2xl p-5 shadow-lg">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs text-dark-muted font-bold uppercase tracking-wider">Registered Accounts</p>
+                          <div className="w-9 h-9 rounded-lg bg-purple-500/10 text-purple-400 flex items-center justify-center border border-purple-500/20">
+                            <Users className="w-4.5 h-4.5" />
+                          </div>
+                        </div>
+                        <h2 className="text-2xl font-extrabold text-white mt-3">
+                          {summary.users.customers + summary.users.organizers + summary.users.plot_owners}
+                        </h2>
+                        <p className="text-[10px] text-dark-muted mt-1 font-semibold leading-relaxed">
+                          Cust: {summary.users.customers} | Org: {summary.users.organizers} | Plot: {summary.users.plot_owners}
+                        </p>
+                      </div>
+
+                      <div className="glass-panel border border-white/10 rounded-2xl p-5 shadow-lg border-red-500/15">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs text-dark-muted font-bold uppercase tracking-wider">Pending Actions</p>
+                          <div className="w-9 h-9 rounded-lg bg-red-500/10 text-red-400 flex items-center justify-center border border-red-500/20">
+                            <ShieldAlert className="w-4.5 h-4.5" />
+                          </div>
+                        </div>
+                        <h2 className="text-2xl font-extrabold text-white mt-3">
+                          {summary.pending.organizers + summary.pending.plot_owners + summary.pending.events + summary.pending.venues}
+                        </h2>
+                        <p className="text-[10px] text-white font-semibold mt-1">Approvals required in system</p>
+                      </div>
+
+                      <div className="glass-panel border border-white/10 rounded-2xl p-5 shadow-lg border-emerald-500/15 bg-emerald-950/5">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs text-dark-muted font-bold uppercase tracking-wider">Live Tickets Sold</p>
+                          <div className="w-9 h-9 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/20">
+                            <Ticket className="w-4.5 h-4.5" />
+                          </div>
+                        </div>
+                        <h2 className="text-2xl font-extrabold text-white mt-3">
+                          {summary.finance.total_live_tickets_sold || 0}
+                        </h2>
+                        <p className="text-[10px] text-white font-semibold mt-1 flex items-center">
+                          <span>Live feed bookings count</span>
+                        </p>
+                      </div>
+
+                      <div className="glass-panel border border-white/10 rounded-2xl p-5 shadow-lg border-blue-500/15 bg-blue-950/5">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs text-dark-muted font-bold uppercase tracking-wider">Live Ticket Amount</p>
+                          <div className="w-9 h-9 rounded-lg bg-blue-500/10 text-blue-400 flex items-center justify-center border border-blue-500/20">
+                            <IndianRupee className="w-4.5 h-4.5" />
+                          </div>
+                        </div>
+                        <h2 className="text-2xl font-extrabold text-white mt-3">
+                          ₹{(summary.finance.total_live_revenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </h2>
+                        <p className="text-[10px] text-white font-semibold mt-1">Total live feed sales value</p>
+                      </div>
+
+
+                    </div>
+
+                    {/* Chart Panels */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      
+                      <div className="glass-panel border border-white/10 rounded-2xl p-6 shadow-lg">
+                        <h3 className="text-sm font-bold text-dark-text uppercase tracking-wider border-b border-white/5 pb-3">Financial Sales Trend (Past 30 Days)</h3>
+                        <div className="mt-4">
+                          {renderSVGLineChart(summary.charts.sales, 'revenue', '#3B82F6', true)}
+                        </div>
+                      </div>
+
+                      <div className="glass-panel border border-white/10 rounded-2xl p-6 shadow-lg">
+                        <h3 className="text-sm font-bold text-dark-text uppercase tracking-wider border-b border-white/5 pb-3">User Signups Velocity (Past 30 Days)</h3>
+                        <div className="mt-4">
+                          {renderSVGLineChart(summary.charts.signups, 'count', '#3B82F6', false)}
+                        </div>
+                      </div>
+
+                    </div>
+
+                    {/* Live Ticket Sales Feed (WebSocket Monitor) */}
+                    <div className="glass-panel border border-white/10 rounded-2xl p-6 shadow-lg relative overflow-hidden bg-gradient-to-r from-dark-bg via-slate-900 to-indigo-950/20">
+                      <div className="absolute top-0 right-0 p-4">
+                        <span className="flex h-3 w-3 relative">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-2.5 border-b border-white/5 pb-3">
+                        <Ticket className="w-5 h-5 text-emerald-400 animate-pulse" />
+                        <div>
+                          <h3 className="text-sm font-bold text-dark-text uppercase tracking-wider">Live Ticket Sales Feed</h3>
+                          <p className="text-[10px] text-dark-muted mt-0.5">Real-time WebSocket monitoring active</p>
+                        </div>
+                      </div>
+                      <div className="mt-4 space-y-3 max-h-[250px] overflow-y-auto pr-1">
+                        {liveSales.length === 0 ? (
+                          <div className="text-center py-8 text-dark-muted text-xs flex flex-col items-center justify-center space-y-2">
+                            <RefreshCw className="w-6 h-6 animate-spin text-dark-muted" />
+                            <span>Waiting for live ticketing transactions...</span>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            <AnimatePresence>
+                              {liveSales.map((sale, idx) => (
+                                <motion.div
+                                  key={sale.booking_id + '-' + idx}
+                                  initial={{ opacity: 0, x: -20 }}
+                                  animate={{ opacity: 1, x: 0 }}
+                                  className="flex items-center justify-between p-3.5 rounded-xl bg-white/[0.02] border border-white/5 hover:border-emerald-500/20 transition-all"
+                                >
+                                  <div className="flex items-center space-x-3">
+                                    <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400 border border-emerald-500/20">
+                                      <Ticket className="w-4 h-4" />
+                                    </div>
+                                    <div>
+                                      <p className="text-xs font-bold text-white">
+                                        {sale.buyer_name} bought {sale.tickets_count} ticket(s)
+                                      </p>
+                                      <p className="text-[10px] text-dark-muted mt-0.5">
+                                        for <span className="text-emerald-400 font-semibold">{sale.event_title}</span>
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="text-right">
+                                    <p className="text-xs font-bold text-emerald-400 font-mono">₹{sale.price}</p>
+                                    <p className="text-[9px] text-dark-muted font-mono mt-0.5">
+                                      {new Date(sale.timestamp || Date.now()).toLocaleTimeString()}
+                                    </p>
+                                  </div>
+                                </motion.div>
+                              ))}
+                            </AnimatePresence>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                  </div>
+                )}
+
+                {/* TAB: PLATFORM REVENUE */}
+                {activeTab === 'platform_revenue' && summary && (
+                  <div className="space-y-8">
+                    {/* Platform Commission Summary */}
+                    <div className="glass-panel border border-white/10 rounded-2xl p-6 shadow-lg bg-gradient-to-br from-slate-900 via-slate-900 to-blue-950/15">
+                      <div className="flex items-center space-x-2 border-b border-white/5 pb-4 mb-4">
+                        <IndianRupee className="w-5 h-5 text-[#3B82F6]" />
+                        <h2 className="font-extrabold text-base text-dark-text uppercase tracking-wider">
+                          Platform Revenue & Commission (20% Cut)
+                        </h2>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                        {/* Total Commission */}
+                        <div className="bg-white/5 border border-white/5 p-4 rounded-xl">
+                          <p className="text-[10px] text-dark-muted font-bold uppercase tracking-wider">Total Commission Earned</p>
+                          <h3 className="text-3xl font-black text-emerald-400 mt-2">
+                            ₹{(summary.finance.admin_total_commission || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </h3>
+                          <p className="text-[9px] text-dark-muted mt-1 leading-relaxed">
+                            Accrued from completed events and finished venue rentals.
+                          </p>
+                        </div>
+                        {/* Organizer Commission */}
+                        <div className="bg-white/5 border border-white/5 p-4 rounded-xl">
+                          <p className="text-[10px] text-dark-muted font-bold uppercase tracking-wider">From Event Bookings (Organizers)</p>
+                          <h3 className="text-2xl font-black text-white mt-2">
+                            ₹{(summary.finance.admin_organizer_commission || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </h3>
+                          <p className="text-[9px] text-dark-muted mt-1 leading-relaxed">
+                            20% of active bookings (₹{(summary.finance.completed_events_revenue || 0).toLocaleString()}) + 10% of cancelled bookings (₹{(summary.finance.refunded_events_revenue || 0).toLocaleString()}).
+                          </p>
+                        </div>
+                        {/* Venue Booking Commission */}
+                        <div className="bg-white/5 border border-white/5 p-4 rounded-xl">
+                          <p className="text-[10px] text-dark-muted font-bold uppercase tracking-wider">From Venue Bookings (Plot Owners)</p>
+                          <h3 className="text-2xl font-black text-white mt-2">
+                            ₹{(summary.finance.admin_venue_commission || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </h3>
+                          <p className="text-[9px] text-dark-muted mt-1 leading-relaxed">
+                            20% share of ₹{(summary.finance.completed_venues_revenue || 0).toLocaleString()} from finished venue rentals.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Event Ticketing Profit & Loss Audit */}
+                    <div className="glass-panel border border-white/10 rounded-2xl p-6 shadow-lg bg-gradient-to-br from-slate-900 via-slate-950 to-emerald-950/15">
+                      <div className="flex items-center space-x-2 border-b border-white/5 pb-4 mb-4">
+                        <Activity className="w-5 h-5 text-emerald-400" />
+                        <h2 className="font-extrabold text-base text-dark-text uppercase tracking-wider">
+                          Event Ticketing Sales & Cancellation Splits
+                        </h2>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                        
+                        {/* Event Gross Sales */}
+                        <div className="bg-white/5 border border-white/5 p-4 rounded-xl">
+                          <p className="text-[10px] text-dark-muted font-bold uppercase tracking-wider">Gross Ticketing Sales</p>
+                          <h3 className="text-2xl font-black text-white mt-2">
+                            ₹{(summary.finance.event_gross_sales || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </h3>
+                          <div className="mt-3 space-y-1 text-[9px] text-dark-muted border-t border-white/5 pt-2">
+                            <div className="flex justify-between">
+                              <span>Active Bookings (80% / 20%):</span>
+                              <span className="text-dark-text font-medium">₹{(summary.finance.event_active_sales || 0).toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Cancelled Bookings:</span>
+                              <span className="text-red-400 font-medium">₹{(summary.finance.event_cancelled_sales || 0).toLocaleString()}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Customer Refunds */}
+                        <div className="bg-white/5 border border-white/5 p-4 rounded-xl">
+                          <p className="text-[10px] text-dark-muted font-bold uppercase tracking-wider">Total Customer Refunds (50%)</p>
+                          <h3 className="text-2xl font-black text-blue-400 mt-2">
+                            ₹{(summary.finance.customer_refunds || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </h3>
+                          <div className="mt-3 space-y-1 text-[9px] text-dark-muted border-t border-white/5 pt-2">
+                            <div className="flex justify-between">
+                              <span>Cancellations Count:</span>
+                              <span className="text-dark-text font-medium">{summary.finance.event_cancelled_count} bookings</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Refund policy rate:</span>
+                              <span className="text-blue-400 font-medium">50% ticket price</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Organizer Net & Loss Impact */}
+                        <div className="bg-white/5 border border-white/5 p-4 rounded-xl">
+                          <p className="text-[10px] text-dark-muted font-bold uppercase tracking-wider">Organizer Sales Net Retained</p>
+                          <h3 className="text-2xl font-black text-emerald-400 mt-2">
+                            ₹{(summary.finance.organizer_active_sales + summary.finance.organizer_cancelled_retained || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </h3>
+                          <div className="mt-3 space-y-1 text-[9px] text-dark-muted border-t border-white/5 pt-2">
+                            <div className="flex justify-between">
+                              <span>Active Organizer Cut (80%):</span>
+                              <span className="text-dark-text font-medium">₹{(summary.finance.organizer_active_sales || 0).toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Cut/Loss from Refunds (40%):</span>
+                              <span className="text-red-400 font-medium">-₹{(summary.finance.organizer_refund_impact || 0).toLocaleString()}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Admin Net & Loss Impact */}
+                        <div className="bg-white/5 border border-white/5 p-4 rounded-xl">
+                          <p className="text-[10px] text-dark-muted font-bold uppercase tracking-wider">Admin Commission Retained</p>
+                          <h3 className="text-2xl font-black text-brand-primary mt-2">
+                            ₹{(summary.finance.admin_active_commission + summary.finance.admin_cancelled_commission || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </h3>
+                          <div className="mt-3 space-y-1 text-[9px] text-dark-muted border-t border-white/5 pt-2">
+                            <div className="flex justify-between">
+                              <span>Active Admin Cut (20%):</span>
+                              <span className="text-dark-text font-medium">₹{(summary.finance.admin_active_commission || 0).toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Cut/Loss from Refunds (10%):</span>
+                              <span className="text-red-400 font-medium">-₹{(summary.finance.admin_cut_refund_impact || 0).toLocaleString()}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB: APPROVALS */}
+                {activeTab === 'approvals' && (
+                  <div className="space-y-8">
+                    
+                    {/* Organizer & Owner accounts pending approval */}
+                    <div className="glass-panel border border-white/10 rounded-2xl p-6 shadow-lg">
+                      <div className="flex items-center space-x-2 border-b border-white/5 pb-4 mb-4">
+                        <Users className="w-4.5 h-4.5 text-red-400" />
+                        <h2 className="font-extrabold text-base text-dark-text uppercase tracking-wider">Account Approvals</h2>
+                      </div>
+                      
+                      {usersList.filter(u => u.role !== 'customer' && !u.is_approved).length === 0 ? (
+                        <p className="text-xs text-dark-muted py-2">No pending organizer or plot owner registration requests.</p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-xs border-collapse">
+                            <thead>
+                              <tr className="border-b border-white/5 text-dark-muted font-bold">
+                                <th className="pb-3">User</th>
+                                <th className="pb-3">Role</th>
+                                <th className="pb-3">Joined Date</th>
+                                <th className="pb-3 text-right">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {usersList.filter(u => u.role !== 'customer' && !u.is_approved).map(u => (
+                                <tr key={u.id} className="border-b border-white/5 hover:bg-white/[0.01]">
+                                  <td className="py-3">
+                                    <p className="font-bold text-dark-text">{u.first_name} {u.last_name}</p>
+                                    <p className="text-[10px] text-dark-muted">{u.email}</p>
+                                  </td>
+                                  <td className="py-3">
+                                    <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                                      {u.role.replace('_', ' ')}
+                                    </span>
+                                  </td>
+                                  <td className="py-3 text-dark-muted">
+                                    {new Date(u.date_joined).toLocaleDateString()}
+                                  </td>
+                                  <td className="py-3 text-right">
+                                    <button
+                                      onClick={() => handleUserApprove(u.id)}
+                                      disabled={actionLoading === `approve-user-${u.id}`}
+                                      className="bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/25 text-emerald-400 px-3 py-1.5 rounded-lg font-bold text-[10px] disabled:opacity-40 transition-colors"
+                                    >
+                                      {actionLoading === `approve-user-${u.id}` ? 'Approving...' : 'Approve Account'}
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Pending Events */}
+                    <div className="glass-panel border border-white/10 rounded-2xl p-6 shadow-lg">
+                      <div className="flex items-center space-x-2 border-b border-white/5 pb-4 mb-4">
+                        <Calendar className="w-4.5 h-4.5 text-red-400" />
+                        <h2 className="font-extrabold text-base text-dark-text uppercase tracking-wider">Event Approvals</h2>
+                      </div>
+
+                      {pendingEvents.length === 0 ? (
+                        <p className="text-xs text-dark-muted py-2">No pending event listings.</p>
+                      ) : (
+                        <div className="space-y-4">
+                          {pendingEvents.map(event => (
+                            <div key={event.id} className="border border-white/5 bg-white/[0.01] hover:bg-white/[0.02] rounded-xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 transition-colors">
+                              <div onClick={() => setDetailModalItem({ type: 'event', item: event })} className="cursor-pointer group">
+                                <h3 className="font-extrabold text-sm text-dark-text group-hover:text-red-400 group-hover:underline transition-colors flex items-center gap-1.5">
+                                  <span>{event.title}</span>
+                                  <span className="text-[10px] bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.2 rounded">View Details</span>
+                                </h3>
+                                <p className="text-xs text-dark-muted mt-1">Host: {event.organizer_details?.email}</p>
+                                <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[10px] text-dark-muted">
+                                  <span>Price: ₹{event.price}</span>
+                                  <span>Tickets: {event.tickets_total}</span>
+                                  <span>Location: {event.location}</span>
+                                </div>
+                              </div>
+                              <div className="flex items-center space-x-2">
+                                <button
+                                  onClick={() => handleEventApproval(event.id, 'approve')}
+                                  disabled={actionLoading === `event-${event.id}`}
+                                  className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 px-3 py-1.5 rounded-lg text-xs font-bold transition-all disabled:opacity-40"
+                                >
+                                  Approve
+                                </button>
+                                <button
+                                  onClick={() => handleEventApproval(event.id, 'reject')}
+                                  disabled={actionLoading === `event-${event.id}`}
+                                  className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 px-3 py-1.5 rounded-lg text-xs font-bold transition-all disabled:opacity-40"
+                                >
+                                  Reject
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Pending Venues */}
+                    <div className="glass-panel border border-white/10 rounded-2xl p-6 shadow-lg">
+                      <div className="flex items-center space-x-2 border-b border-white/5 pb-4 mb-4">
+                        <Home className="w-4.5 h-4.5 text-red-400" />
+                        <h2 className="font-extrabold text-base text-dark-text uppercase tracking-wider">Venue Approvals</h2>
+                      </div>
+
+                      {pendingVenues.length === 0 ? (
+                        <p className="text-xs text-dark-muted py-2">No pending venue listings.</p>
+                      ) : (
+                        <div className="space-y-4">
+                          {pendingVenues.map(venue => (
+                            <div key={venue.id} className="border border-white/5 bg-white/[0.01] hover:bg-white/[0.02] rounded-xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 transition-colors">
+                              <div onClick={() => setDetailModalItem({ type: 'venue', item: venue })} className="cursor-pointer group">
+                                <h3 className="font-extrabold text-sm text-dark-text group-hover:text-red-400 group-hover:underline transition-colors flex items-center gap-1.5">
+                                  <span>{venue.name}</span>
+                                  <span className="text-[10px] bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.2 rounded">View Details</span>
+                                </h3>
+                                <p className="text-xs text-dark-muted mt-1">Owner: {venue.owner_details?.email}</p>
+                                <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[10px] text-dark-muted">
+                                  <span>Rent: ₹{venue.price_per_day}/day</span>
+                                  <span>Location: {venue.location}</span>
+                                </div>
+                              </div>
+                              <div className="flex items-center space-x-2">
+                                <button
+                                  onClick={() => handleVenueApproval(venue.id, 'approve')}
+                                  disabled={actionLoading === `venue-${venue.id}`}
+                                  className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 px-3 py-1.5 rounded-lg text-xs font-bold transition-all disabled:opacity-40"
+                                >
+                                  Approve
+                                </button>
+                                <button
+                                  onClick={() => handleVenueApproval(venue.id, 'reject')}
+                                  disabled={actionLoading === `venue-${venue.id}`}
+                                  className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 px-3 py-1.5 rounded-lg text-xs font-bold transition-all disabled:opacity-40"
+                                >
+                                  Reject
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    
+                  </div>
+                )}
+
+                {/* TAB: USER CONTROL */}
+                {activeTab === 'users' && (
+                  <div className="glass-panel border border-white/10 rounded-2xl p-6 shadow-lg space-y-6">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-4">
+                      <div className="flex items-center space-x-2">
+                        <Users className="w-4.5 h-4.5 text-red-400" />
+                        <h2 className="font-extrabold text-base text-dark-text uppercase tracking-wider">User Directory Management</h2>
+                      </div>
+                      
+                      {/* Search and Filters */}
+                      <div className="flex flex-col sm:flex-row items-center gap-3">
+                        <div className="relative">
+                          <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-dark-muted">
+                            <Search className="w-4 h-4" />
+                          </span>
+                          <input
+                            type="text"
+                            value={userSearch}
+                            onChange={(e) => setUserSearch(e.target.value)}
+                            placeholder="Search by name/email..."
+                            className="glass-input pl-9 pr-4 py-2.5 rounded-xl text-xs w-48 placeholder-dark-muted text-white bg-dark-bg focus:outline-none"
+                          />
+                        </div>
+                        <select
+                          value={userRoleFilter}
+                          onChange={(e) => setUserRoleFilter(e.target.value)}
+                          className="glass-input px-3 py-2.5 rounded-xl text-xs text-dark-text bg-dark-bg focus:outline-none w-32"
+                        >
+                          <option value="">All Roles</option>
+                          <option value="customer">Customer</option>
+                          <option value="organizer">Organizer</option>
+                          <option value="plot_owner">Plot Owner</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-white/5 text-dark-muted font-bold">
+                            <th className="pb-3">User Details</th>
+                            <th className="pb-3">Role</th>
+                            <th className="pb-3">Security status</th>
+                            <th className="pb-3 text-right">Administration Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {!Array.isArray(usersList) || usersList.length === 0 ? (
+                            <tr>
+                              <td colSpan="4" className="text-center py-6 text-dark-muted">No users found.</td>
+                            </tr>
+                          ) : (
+                            usersList.map(u => (
+                              <tr key={u.id} className="border-b border-white/5 hover:bg-white/[0.01]">
+                                <td className="py-4">
+                                  <p className="font-bold text-dark-text">{(u.first_name || u.last_name) ? `${u.first_name || ''} ${u.last_name || ''}`.trim() : (u.username || u.email)}</p>
+                                  <p className="text-[10px] text-dark-muted mt-0.5">{u.email}</p>
+                                </td>
+                                <td className="py-4">
+                                  <span className={`px-2 py-0.5 rounded text-[9px] uppercase font-extrabold ${
+                                    u.role === 'customer' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/10' :
+                                    u.role === 'organizer' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/10' :
+                                    u.role === 'plot_owner' ? 'bg-purple-500/10 text-purple-400 border border-purple-500/10' :
+                                    'bg-red-500/10 text-red-400 border border-red-500/10'
+                                  }`}>
+                                    {u.role.replace('_', ' ')}
+                                  </span>
+                                </td>
+                                <td className="py-4">
+                                  <div className="flex items-center space-x-2">
+                                    <span className={`w-1.5 h-1.5 rounded-full ${u.is_active ? 'bg-emerald-400' : 'bg-red-500'}`} />
+                                    <span className="text-[10px] font-bold text-dark-text">{u.is_active ? 'Active' : 'Blocked'}</span>
+                                    <span className="text-[9px] text-dark-muted font-bold">
+                                      ({u.is_approved ? 'Approved' : 'Pending Approve'})
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="py-4 text-right">
+                                  <div className="flex items-center justify-end space-x-2">
+                                    {/* Action: Approve */}
+                                    {u.role !== 'customer' && !u.is_approved && (
+                                      <button
+                                        onClick={() => handleUserApprove(u.id)}
+                                        disabled={actionLoading === `approve-user-${u.id}`}
+                                        className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 px-2.5 py-1.5 rounded-lg font-bold text-[9px] flex items-center space-x-1"
+                                      >
+                                        <Check className="w-3.5 h-3.5" />
+                                        <span>Approve</span>
+                                      </button>
+                                    )}
+                                    {/* Action: Direct Message User */}
+                                    <button
+                                      onClick={() => openMessageModal(u)}
+                                      className="bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 px-2.5 py-1.5 rounded-lg font-bold text-[9px] flex items-center space-x-1 transition-colors"
+                                    >
+                                      <Mail className="w-3 h-3" />
+                                      <span>Message</span>
+                                    </button>
+                                    {/* Action: Block/Unblock */}
+                                    <button
+                                      onClick={() => handleUserBlockToggle(u.id)}
+                                      disabled={actionLoading === `block-${u.id}`}
+                                      className={`px-2.5 py-1.5 rounded-lg font-bold text-[9px] flex items-center space-x-1 border transition-colors ${
+                                        u.is_active
+                                          ? 'bg-red-500/5 hover:bg-red-500/10 text-red-400 border-red-500/15'
+                                          : 'bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-400 border-emerald-500/15'
+                                      }`}
+                                    >
+                                      {u.is_active ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                                      <span>{u.is_active ? 'Block' : 'Unblock'}</span>
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB: TRANSACTIONS & REFUNDS */}
+                {activeTab === 'finance' && (
+                  <div className="glass-panel border border-white/10 rounded-2xl p-6 shadow-lg space-y-6">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-4">
+                      <div className="flex items-center space-x-2">
+                        <IndianRupee className="w-4.5 h-4.5 text-red-400" />
+                        <h2 className="font-extrabold text-base text-dark-text uppercase tracking-wider">Bookings & Razorpay Payments</h2>
+                      </div>
+                      
+                      {/* Search and Filters */}
+                      <div className="flex flex-col sm:flex-row items-center gap-3">
+                        <div className="relative">
+                          <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-dark-muted">
+                            <Search className="w-4 h-4" />
+                          </span>
+                          <input
+                            type="text"
+                            value={bookingSearch}
+                            onChange={(e) => setBookingSearch(e.target.value)}
+                            placeholder="Search by customer/event..."
+                            className="glass-input pl-9 pr-4 py-2.5 rounded-xl text-xs w-48 placeholder-dark-muted text-white bg-dark-bg focus:outline-none"
+                          />
+                        </div>
+                        <select
+                          value={bookingStatusFilter}
+                          onChange={(e) => setBookingStatusFilter(e.target.value)}
+                          className="glass-input px-3 py-2.5 rounded-xl text-xs text-dark-text bg-dark-bg focus:outline-none w-36"
+                        >
+                          <option value="">All Statuses</option>
+                          <option value="confirmed">Confirmed</option>
+                          <option value="cancelled">Cancelled</option>
+                          <option value="pending">Pending</option>
+                          <option value="refund_requested">Refund Requests</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-white/5 text-dark-muted font-bold">
+                            <th className="pb-3">Booking ID</th>
+                            <th className="pb-3">Event & Attendees</th>
+                            <th className="pb-3">Receipt Info</th>
+                            <th className="pb-3">Status</th>
+                            <th className="pb-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {bookingsList.length === 0 ? (
+                            <tr>
+                              <td colSpan="5" className="text-center py-6 text-dark-muted">No transaction receipts found.</td>
+                            </tr>
+                          ) : (
+                            bookingsList.map(booking => (
+                              <tr key={booking.id} className="border-b border-white/5 hover:bg-white/[0.01]">
+                                <td className="py-4">
+                                  <p className="font-bold text-dark-text">#{booking.id}</p>
+                                  <p className="text-[9px] text-dark-muted font-mono">{new Date(booking.created_at).toLocaleDateString()}</p>
+                                </td>
+                                <td className="py-4">
+                                  <p className="font-bold text-white line-clamp-1">{booking.event_details?.title}</p>
+                                  <p className="text-[10px] text-dark-muted mt-0.5 flex items-center">
+                                    <CornerDownRight className="w-3.5 h-3.5 mr-1" />
+                                    <span>{booking.user_details?.email} ({booking.tickets_count} tickets • {booking.ticket_category})</span>
+                                  </p>
+                                </td>
+                                <td className="py-4">
+                                  <p className="font-extrabold text-emerald-400 font-mono">₹{booking.total_price}</p>
+                                  <p className="text-[9px] text-dark-muted mt-0.5 font-mono">ID: {booking.payment_id || 'MOCK_REF'}</p>
+                                </td>
+                                <td className="py-4">
+                                  <div className="flex flex-col space-y-1">
+                                    <span className={`w-fit px-2 py-0.5 rounded text-[8px] uppercase tracking-wider font-extrabold ${
+                                      booking.status === 'confirmed' ? 'bg-emerald-500/10 text-emerald-400' :
+                                      booking.status === 'cancelled' ? 'bg-red-500/10 text-red-400' :
+                                      'bg-yellow-500/10 text-yellow-400'
+                                    }`}>
+                                      {booking.status}
+                                    </span>
+                                    <span className="text-[9px] font-semibold text-dark-muted font-mono">
+                                      Pay: {booking.payment_status}
+                                    </span>
+                                    {booking.refund_requested && (
+                                      <span className="px-2 py-0.5 rounded text-[8px] bg-amber-500/10 text-amber-400 border border-amber-500/15 font-bold w-fit mt-1 animate-pulse">
+                                        Refund Requested
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="py-4 text-right">
+                                  {booking.payment_status === 'paid' ? (
+                                    booking.refund_requested ? (
+                                      <button
+                                        onClick={() => setRefundModal({ show: true, booking })}
+                                        disabled={actionLoading === `refund-${booking.id}`}
+                                        className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/15 px-2.5 py-1.5 rounded-lg font-bold text-[9px] disabled:opacity-40 transition-colors"
+                                      >
+                                        {actionLoading === `refund-${booking.id}` ? 'Processing...' : 'Approve Refund'}
+                                      </button>
+                                    ) : booking.event_details ? (
+                                      <span className="text-[10px] text-dark-muted font-semibold">Handled by Organizer</span>
+                                    ) : (
+                                      <button
+                                        onClick={() => setRefundModal({ show: true, booking })}
+                                        disabled={actionLoading === `refund-${booking.id}`}
+                                        className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/15 px-2.5 py-1.5 rounded-lg font-bold text-[9px] disabled:opacity-40 transition-colors"
+                                      >
+                                        {actionLoading === `refund-${booking.id}` ? 'Processing...' : 'Refund Order'}
+                                      </button>
+                                    )
+                                  ) : (
+                                    <span className="text-[10px] text-dark-muted font-semibold">Processed</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB: BROADCAST ALERTS */}
+                {activeTab === 'broadcast' && (
+                  <div className="glass-panel border border-white/10 rounded-2xl p-6 shadow-lg space-y-6 max-w-xl mx-auto">
+                    <div className="flex items-center space-x-2 border-b border-white/5 pb-4">
+                      <Send className="w-4.5 h-4.5 text-red-400" />
+                      <h2 className="font-extrabold text-base text-dark-text uppercase tracking-wider">Broadcast Live Alert</h2>
+                    </div>
+
+                    <form onSubmit={handleSendBroadcast} className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-semibold text-dark-muted uppercase tracking-wider mb-2">Alert Title</label>
+                        <input
+                          type="text"
+                          value={broadcastTitle}
+                          onChange={(e) => setBroadcastTitle(e.target.value)}
+                          placeholder="e.g. System Maintenance or Ahmedabad Rain Alerts"
+                          className="glass-input w-full px-4 py-3 rounded-xl text-xs placeholder-dark-muted text-white bg-dark-bg focus:outline-none"
+                          required
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-xs font-semibold text-dark-muted uppercase tracking-wider mb-2">Message Body</label>
+                        <textarea
+                          rows="4"
+                          value={broadcastMessage}
+                          onChange={(e) => setBroadcastMessage(e.target.value)}
+                          placeholder="Write a clear notification message to be broadcasted to all connected user WebSockets instantly..."
+                          className="glass-input w-full px-4 py-3 rounded-xl text-xs placeholder-dark-muted text-white bg-dark-bg focus:outline-none resize-none"
+                          required
+                        ></textarea>
+                      </div>
+
+                      {broadcastSuccess && (
+                        <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs rounded-xl font-medium">
+                          {broadcastSuccess}
+                        </div>
+                      )}
+
+                      <button
+                        type="submit"
+                        disabled={actionLoading === 'broadcast' || !broadcastTitle.trim() || !broadcastMessage.trim()}
+                        className="w-full bg-red-500 hover:bg-red-600 disabled:opacity-40 text-white font-bold py-3 px-6 rounded-xl transition-all shadow-md shadow-red-950/20 text-xs uppercase tracking-wider flex items-center justify-center space-x-2"
+                      >
+                        <Send className="w-4 h-4" />
+                        <span>{actionLoading === 'broadcast' ? 'Sending broadcast...' : 'Broadcast Live Notification'}</span>
+                      </button>
+                    </form>
+                  </div>
+                )}
+
+                {/* TAB: ALL EVENTS */}
+                {activeTab === 'all_events' && (
+                  <div className="glass-panel border border-white/10 rounded-2xl p-6 shadow-lg space-y-6">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-4">
+                      <div className="flex items-center space-x-2">
+                        <Calendar className="w-5 h-5 text-red-400" />
+                        <h2 className="font-extrabold text-base text-dark-text uppercase tracking-wider">All Events</h2>
+                      </div>
+                      
+                      {/* Search Bar */}
+                      <div className="relative max-w-md w-full md:w-80">
+                        <Search className="absolute left-3.5 top-3 w-4.5 h-4.5 text-dark-muted" />
+                        <input
+                          type="text"
+                          placeholder="Search events..."
+                          value={eventSearch}
+                          onChange={(e) => setEventSearch(e.target.value)}
+                          className="w-full pl-10 pr-4 py-2 bg-white/5 border border-white/5 focus:border-red-500/35 rounded-xl text-sm text-dark-text focus:outline-none transition-all placeholder:text-dark-muted font-semibold"
+                        />
+                      </div>
+                    </div>
+
+                    {allEvents.length === 0 ? (
+                      <p className="text-xs text-dark-muted py-4 text-center">No events found matching your search.</p>
+                    ) : (
+                      <>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-xs border-collapse">
+                            <thead>
+                              <tr className="border-b border-white/5 text-dark-muted font-bold">
+                                <th className="pb-3">Event Title</th>
+                                <th className="pb-3">Organizer</th>
+                                <th className="pb-3">Price</th>
+                                <th className="pb-3">Location</th>
+                                <th className="pb-3">Tickets Sold</th>
+                                <th className="pb-3">Status</th>
+                                <th className="pb-3 text-right">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {paginatedEvents.map(event => (
+                                <tr 
+                                  key={event.id} 
+                                  onClick={() => setPreviewEvent(event)}
+                                  className="border-b border-white/5 hover:bg-white/5 cursor-pointer transition-colors group"
+                                >
+                                  <td className="py-3 font-bold text-dark-text">
+                                    <div className="flex items-center space-x-3">
+                                      <img
+                                        src={event.image || 'https://images.unsplash.com/photo-1501281668745-f7f57925c3b4?auto=format&fit=crop&w=80&q=80'}
+                                        alt={event.title}
+                                        className="w-10 h-10 object-cover rounded-lg border border-white/10 flex-shrink-0 group-hover:scale-110 transition-transform shadow-md"
+                                        onError={(e) => {
+                                          e.target.src = 'https://images.unsplash.com/photo-1501281668745-f7f57925c3b4?auto=format&fit=crop&w=80&q=80';
+                                        }}
+                                      />
+                                      <span className="text-white group-hover:text-red-400 group-hover:underline font-extrabold transition-colors">{event.title}</span>
+                                    </div>
+                                  </td>
+                                  <td className="py-3 text-dark-muted">{event.organizer_details?.email || event.organizer}</td>
+                                  <td className="py-3 text-dark-text font-semibold">₹{event.price}</td>
+                                  <td className="py-3 text-dark-muted">{event.location}</td>
+                                  <td className="py-3 text-dark-muted">{event.tickets_sold} / {event.tickets_total}</td>
+                                  <td className="py-3">
+                                    {event.is_approved ? (
+                                      <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Approved</span>
+                                    ) : (
+                                      <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-yellow-500/10 text-yellow-400 border border-yellow-500/20">Pending</span>
+                                    )}
+                                  </td>
+                                  <td className="py-3 text-right space-x-2" onClick={(e) => e.stopPropagation()}>
+                                    {!event.is_approved && (
+                                      <button
+                                        onClick={() => handleEventApproval(event.id, 'approve')}
+                                        disabled={actionLoading === `event-${event.id}`}
+                                        className="bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/25 text-emerald-400 px-2 py-1 rounded-lg font-bold text-[10px] disabled:opacity-40 transition-colors"
+                                      >
+                                        Approve
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={() => handleEventDelete(event.id)}
+                                      disabled={actionLoading === `delete-event-${event.id}`}
+                                      className="bg-red-500/15 hover:bg-red-500/25 border border-red-500/25 text-red-400 px-2 py-1 rounded-lg font-bold text-[10px] disabled:opacity-40 transition-colors"
+                                    >
+                                      Delete
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        {renderPagination(eventsPage, totalEventPages, setEventsPage, allEvents.length)}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* TAB: ALL VENUES */}
+                {activeTab === 'all_venues' && (
+                  <div className="glass-panel border border-white/10 rounded-2xl p-6 shadow-lg space-y-6">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-4">
+                      <div className="flex items-center space-x-2">
+                        <Building className="w-5 h-5 text-red-400" />
+                        <h2 className="font-extrabold text-base text-dark-text uppercase tracking-wider">All Venues</h2>
+                      </div>
+                      
+                      {/* Search Bar */}
+                      <div className="relative max-w-md w-full md:w-80">
+                        <Search className="absolute left-3.5 top-3 w-4.5 h-4.5 text-dark-muted" />
+                        <input
+                          type="text"
+                          placeholder="Search venues..."
+                          value={venueSearch}
+                          onChange={(e) => setVenueSearch(e.target.value)}
+                          className="w-full pl-10 pr-4 py-2 bg-white/5 border border-white/5 focus:border-red-500/35 rounded-xl text-sm text-dark-text focus:outline-none transition-all placeholder:text-dark-muted font-semibold"
+                        />
+                      </div>
+                    </div>
+
+                    {allVenues.length === 0 ? (
+                      <p className="text-xs text-dark-muted py-4 text-center">No venues found matching your search.</p>
+                    ) : (
+                      <>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-xs border-collapse">
+                            <thead>
+                              <tr className="border-b border-white/5 text-dark-muted font-bold">
+                                <th className="pb-3">Venue Name</th>
+                                <th className="pb-3">Owner</th>
+                                <th className="pb-3">Rent/Day</th>
+                                <th className="pb-3">Location</th>
+                                <th className="pb-3">Capacity</th>
+                                <th className="pb-3">Status</th>
+                                <th className="pb-3 text-right">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {paginatedVenues.map(venue => (
+                                <tr 
+                                  key={venue.id} 
+                                  onClick={() => setPreviewVenue(venue)}
+                                  className="border-b border-white/5 hover:bg-white/5 cursor-pointer transition-colors group"
+                                >
+                                  <td className="py-3 font-bold text-dark-text">
+                                    <div className="flex items-center space-x-3">
+                                      <img
+                                        src={venue.image || 'https://images.unsplash.com/photo-1519167758481-83f550bb49b3?auto=format&fit=crop&w=80&q=80'}
+                                        alt={venue.name}
+                                        className="w-10 h-10 object-cover rounded-lg border border-white/10 flex-shrink-0 group-hover:scale-110 transition-transform shadow-md"
+                                        onError={(e) => {
+                                          e.target.src = 'https://images.unsplash.com/photo-1519167758481-83f550bb49b3?auto=format&fit=crop&w=80&q=80';
+                                        }}
+                                      />
+                                      <span className="text-white group-hover:text-red-400 group-hover:underline font-extrabold transition-colors">{venue.name}</span>
+                                    </div>
+                                  </td>
+                                  <td className="py-3 text-dark-muted">{venue.owner_details?.email || venue.owner}</td>
+                                  <td className="py-3 text-dark-text font-semibold">₹{venue.price_per_day}</td>
+                                  <td className="py-3 text-dark-muted">{venue.location}</td>
+                                  <td className="py-3 text-dark-muted">{venue.capacity} guests</td>
+                                  <td className="py-3">
+                                    {venue.is_approved ? (
+                                      <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Approved</span>
+                                    ) : (
+                                      <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-yellow-500/10 text-yellow-400 border border-yellow-500/20">Pending</span>
+                                    )}
+                                  </td>
+                                  <td className="py-3 text-right space-x-2" onClick={(e) => e.stopPropagation()}>
+                                    {!venue.is_approved && (
+                                      <button
+                                        onClick={() => handleVenueApproval(venue.id, 'approve')}
+                                        disabled={actionLoading === `venue-${venue.id}`}
+                                        className="bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/25 text-emerald-400 px-2 py-1 rounded-lg font-bold text-[10px] disabled:opacity-40 transition-colors"
+                                      >
+                                        Approve
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={() => handleVenueDelete(venue.id)}
+                                      disabled={actionLoading === `delete-venue-${venue.id}`}
+                                      className="bg-red-500/15 hover:bg-red-500/25 border border-red-500/25 text-red-400 px-2 py-1 rounded-lg font-bold text-[10px] disabled:opacity-40 transition-colors"
+                                    >
+                                      Delete
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        {renderPagination(venuesPage, totalVenuePages, setVenuesPage, allVenues.length)}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* TAB: COMPLAINTS */}
+                {activeTab === 'complaints' && (
+                  <div className="glass-panel border border-white/10 rounded-2xl p-6 shadow-lg space-y-6">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-4">
+                      <div className="flex items-center space-x-2">
+                        <MessageSquare className="w-4.5 h-4.5 text-red-400" />
+                        <h2 className="font-extrabold text-base text-dark-text uppercase tracking-wider">Complaints & Inquiries</h2>
+                      </div>
+                      
+                      {/* Search and Filters */}
+                      <div className="flex flex-col sm:flex-row items-center gap-3">
+                        <div className="relative">
+                          <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-dark-muted">
+                            <Search className="w-4 h-4" />
+                          </span>
+                          <input
+                            type="text"
+                            value={complaintSearch}
+                            onChange={(e) => setComplaintSearch(e.target.value)}
+                            placeholder="Search complaints..."
+                            className="glass-input pl-9 pr-4 py-2.5 rounded-xl text-xs w-48 placeholder-dark-muted text-white bg-dark-bg focus:outline-none"
+                          />
+                        </div>
+                        <select
+                          value={complaintRoleFilter}
+                          onChange={(e) => setComplaintRoleFilter(e.target.value)}
+                          className="glass-input px-3 py-2.5 rounded-xl text-xs text-dark-text bg-dark-bg focus:outline-none w-36"
+                        >
+                          <option value="">All Roles</option>
+                          <option value="customer">Customer</option>
+                          <option value="organizer">Organizer</option>
+                          <option value="owners">Venue Owner</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-white/5 text-dark-muted font-bold">
+                            <th className="pb-3">Submitted</th>
+                            <th className="pb-3">User Details</th>
+                            <th className="pb-3">Role</th>
+                            <th className="pb-3">Subject & Message</th>
+                            <th className="pb-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {complaintsList.length === 0 ? (
+                            <tr>
+                              <td colSpan="5" className="text-center py-6 text-dark-muted">No complaints or inquiries found.</td>
+                            </tr>
+                          ) : (
+                            complaintsList.map(complaint => (
+                              <tr key={complaint.id} className="border-b border-white/5 hover:bg-white/[0.01]">
+                                <td className="py-4 font-mono text-[9px] text-dark-muted">
+                                  {new Date(complaint.created_at).toLocaleString()}
+                                </td>
+                                <td className="py-4">
+                                  <p className="font-bold text-dark-text">{complaint.name}</p>
+                                  <p className="text-[10px] text-dark-muted mt-0.5">{complaint.email}</p>
+                                </td>
+                                <td className="py-4">
+                                  <span className={`px-2 py-0.5 rounded text-[8px] uppercase tracking-wider font-extrabold ${
+                                    complaint.role === 'customer' ? 'bg-blue-500/10 text-blue-400' :
+                                    complaint.role === 'organizer' ? 'bg-emerald-500/10 text-emerald-400' :
+                                    'bg-purple-500/10 text-purple-400'
+                                  }`}>
+                                    {complaint.role === 'owners' ? 'Venue Owner' : complaint.role}
+                                  </span>
+                                </td>
+                                <td className="py-4 max-w-xs">
+                                  <p className="font-bold text-white line-clamp-1">{complaint.subject || 'No Subject'}</p>
+                                  <p className="text-[10px] text-dark-muted mt-0.5 line-clamp-2 whitespace-pre-wrap">{complaint.message}</p>
+                                </td>
+                                <td className="py-4 text-right">
+                                  <div className="flex items-center justify-end space-x-2">
+                                    <button
+                                      onClick={() => setReplyingTo(complaint)}
+                                      className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/15 px-2.5 py-1.5 rounded-lg font-bold text-[9px] transition-colors"
+                                    >
+                                      Reply
+                                    </button>
+                                    <button
+                                      onClick={() => handleComplaintDelete(complaint.id)}
+                                      disabled={actionLoading === `delete-complaint-${complaint.id}`}
+                                      className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/15 p-1.5 rounded-lg transition-colors disabled:opacity-40"
+                                    >
+                                      <Trash className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+              </motion.div>
+            </AnimatePresence>
+          )}
+
+      </div>
+
+      {/* Reply Modal */}
+      <AnimatePresence>
+        {replyingTo && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              className="glass-panel border border-white/10 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl bg-dark-bg/95"
+            >
+              <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-white/5">
+                <h3 className="text-sm font-extrabold text-white uppercase tracking-wider">Reply to {replyingTo.name}</h3>
+                <button
+                  onClick={() => { setReplyingTo(null); setReplyMessage(''); }}
+                  className="text-dark-muted hover:text-white transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <div className="bg-white/5 p-4 rounded-xl space-y-2 border border-white/5 text-xs text-dark-muted">
+                  <p><strong className="text-white">From:</strong> {replyingTo.name} ({replyingTo.email})</p>
+                  <p><strong className="text-white">Role:</strong> <span className="capitalize">{replyingTo.role}</span></p>
+                  <p><strong className="text-white">Subject:</strong> {replyingTo.subject || 'No Subject'}</p>
+                  <div className="border-t border-white/5 my-2 pt-2 text-white italic whitespace-pre-wrap max-h-32 overflow-y-auto">
+                    "{replyingTo.message}"
+                  </div>
+                </div>
+
+                <form onSubmit={handleSendReply} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-dark-muted uppercase tracking-wider mb-2">Your Reply Message</label>
+                    <textarea
+                      rows="6"
+                      value={replyMessage}
+                      onChange={(e) => setReplyMessage(e.target.value)}
+                      placeholder="Write your email response here..."
+                      className="glass-input w-full px-4 py-3 rounded-xl text-xs placeholder-dark-muted text-white bg-dark-bg focus:outline-none resize-none"
+                      required
+                    ></textarea>
+                  </div>
+
+                  <div className="flex items-center justify-end space-x-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => { setReplyingTo(null); setReplyMessage(''); }}
+                      className="px-4 py-2.5 rounded-xl border border-white/5 text-dark-muted hover:text-white hover:bg-white/5 transition-all text-xs font-bold"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={actionLoading === `reply-${replyingTo.id}` || !replyMessage.trim()}
+                      className="bg-emerald-500 hover:bg-emerald-600 disabled:opacity-40 text-white font-bold py-2.5 px-5 rounded-xl transition-all shadow-md shadow-emerald-950/20 text-xs uppercase tracking-wider flex items-center space-x-2"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>{actionLoading === `reply-${replyingTo.id}` ? 'Sending Reply...' : 'Send Reply via Email'}</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Refund Confirmation Modal */}
+      <AnimatePresence>
+        {refundModal.show && refundModal.booking && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              className="glass-panel border border-white/10 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl bg-dark-bg/95"
+            >
+              <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-white/5">
+                <h3 className="text-sm font-extrabold text-white uppercase tracking-wider">Confirm Refund</h3>
+                <button
+                  onClick={() => setRefundModal({ show: false, booking: null })}
+                  className="text-dark-muted hover:text-white transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <div className="bg-red-500/10 border border-red-500/15 p-4 rounded-xl flex items-start space-x-3 text-red-400 text-xs">
+                  <ShieldAlert className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="font-bold uppercase tracking-wider">Warning</h4>
+                    <p className="mt-1 leading-relaxed">This action will cancel the booking ticket permanently and initiate a refund transfer of the transaction amount.</p>
+                  </div>
+                </div>
+
+                <div className="bg-white/5 p-4 rounded-xl space-y-2 border border-white/5 text-xs text-dark-muted">
+                  <p><strong className="text-white">Booking ID:</strong> #{refundModal.booking.id}</p>
+                  <p><strong className="text-white">Event:</strong> {refundModal.booking.event_details?.title}</p>
+                  <p><strong className="text-white">Customer:</strong> {refundModal.booking.user_details?.email}</p>
+                  <p><strong className="text-white">Tickets Count:</strong> {refundModal.booking.tickets_count}</p>
+                  <p><strong className="text-white">Original Payment:</strong> <span className="text-dark-text font-bold">₹{parseFloat(refundModal.booking.total_price).toFixed(2)}</span></p>
+                  <p><strong className="text-white">Refund Amount (50% Policy):</strong> <span className="text-emerald-400 font-extrabold">₹{(parseFloat(refundModal.booking.total_price) * 0.5).toFixed(2)}</span></p>
+                  {refundModal.booking.razorpay_payment_id ? (
+                    <p><strong className="text-white">Payment Ref:</strong> {refundModal.booking.razorpay_payment_id}</p>
+                  ) : (
+                    <p><strong className="text-white">Payment Ref:</strong> Local / Free Booking</p>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-end space-x-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setRefundModal({ show: false, booking: null })}
+                    className="px-4 py-2.5 rounded-xl border border-white/5 text-dark-muted hover:text-white hover:bg-white/5 transition-all text-xs font-bold"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => handleIssueRefund(refundModal.booking.id)}
+                    disabled={actionLoading === `refund-${refundModal.booking.id}`}
+                    className="bg-red-500 hover:bg-red-600 disabled:opacity-40 text-white font-bold py-2.5 px-5 rounded-xl transition-all shadow-md shadow-red-950/20 text-xs uppercase tracking-wider flex items-center space-x-2"
+                  >
+                    <span>{actionLoading === `refund-${refundModal.booking.id}` ? 'Processing...' : 'Confirm & Issue Refund'}</span>
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Styled Confirm Delete Modal */}
+      <AnimatePresence>
+        {confirmModal.show && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              className="glass-panel w-full max-w-md rounded-2xl p-6 shadow-xl border border-white/10"
+            >
+              <div className="flex items-start space-x-3.5 mb-5">
+                <div className="p-2.5 bg-red-500/15 text-red-400 rounded-xl border border-red-500/20">
+                  <AlertCircle className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-dark-text">{confirmModal.title}</h3>
+                  <p className="text-sm text-dark-muted mt-2 leading-relaxed">{confirmModal.message}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end space-x-3 pt-4 border-t border-white/5">
+                <button
+                  type="button"
+                  onClick={() => setConfirmModal({ show: false, title: '', message: '', onConfirm: null })}
+                  className="px-4 py-2.5 rounded-xl border border-white/5 text-dark-muted hover:text-white hover:bg-white/5 transition-all text-xs font-bold"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    const callback = confirmModal.onConfirm;
+                    setConfirmModal({ show: false, title: '', message: '', onConfirm: null });
+                    if (callback) await callback();
+                  }}
+                  className="bg-red-500 hover:bg-red-600 text-white font-bold py-2.5 px-5 rounded-xl transition-all shadow-md shadow-red-950/20 text-xs uppercase tracking-wider"
+                >
+                  Confirm Delete
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Admin Inspection Detail Modal */}
+      <AnimatePresence>
+        {detailModalItem && (
+          <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-3xl bg-slate-950 border border-white/10 rounded-3xl shadow-2xl overflow-hidden my-8"
+            >
+              {/* Header Close Button */}
+              <button
+                onClick={() => setDetailModalItem(null)}
+                className="absolute top-4 right-4 z-20 p-2.5 rounded-full bg-black/70 hover:bg-black text-white backdrop-blur-md transition-all shadow-lg border border-white/10"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              {/* Banner Image */}
+              <div className="relative h-64 sm:h-72 w-full overflow-hidden bg-slate-900">
+                <img
+                  src={detailModalItem.item.image ? (detailModalItem.item.image.startsWith('http') ? detailModalItem.item.image : `${BACKEND_URL}${detailModalItem.item.image}`) : (detailModalItem.type === 'event' ? 'https://images.unsplash.com/photo-1501281668745-f7f57925c3b4?w=1200' : 'https://images.unsplash.com/photo-1519167758481-83f550bb49b3?w=1200')}
+                  alt="Banner Preview"
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/50 to-transparent"></div>
+                <div className="absolute bottom-4 left-6 right-6">
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    <span className="px-3 py-1 text-[11px] font-extrabold uppercase rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 backdrop-blur-md">
+                      {detailModalItem.type === 'event' ? (detailModalItem.item.category || 'Event Listing') : (detailModalItem.item.category || 'Venue Plot')}
+                    </span>
+                    {detailModalItem.item.is_approved ? (
+                      <span className="px-3 py-1 text-[11px] font-extrabold uppercase rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 backdrop-blur-md">
+                        Approved
+                      </span>
+                    ) : (
+                      <span className="px-3 py-1 text-[11px] font-extrabold uppercase rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 backdrop-blur-md animate-pulse">
+                        Pending Approval
+                      </span>
+                    )}
+                  </div>
+                  <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+                    {detailModalItem.type === 'event' ? detailModalItem.item.title : detailModalItem.item.name}
+                  </h2>
+                </div>
+              </div>
+
+              {/* Body Content */}
+              <div className="p-6 space-y-6 max-h-[55vh] overflow-y-auto">
+                {/* Host / Owner Info */}
+                <div className="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/5">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-rose-500 to-amber-500 text-white font-bold flex items-center justify-center text-sm uppercase">
+                      {(detailModalItem.type === 'event' 
+                        ? (detailModalItem.item.organizer_details?.first_name?.[0] || detailModalItem.item.organizer_details?.email?.[0] || 'O') 
+                        : (detailModalItem.item.owner_details?.first_name?.[0] || detailModalItem.item.owner_details?.email?.[0] || 'V'))}
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-dark-muted uppercase tracking-wider">
+                        {detailModalItem.type === 'event' ? 'Event Organizer' : 'Venue Plot Owner'}
+                      </p>
+                      <p className="text-sm font-extrabold text-white">
+                        {detailModalItem.type === 'event'
+                          ? (detailModalItem.item.organizer_details?.email || detailModalItem.item.organizer)
+                          : (detailModalItem.item.owner_details?.email || detailModalItem.item.owner)}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-xs text-dark-muted font-mono font-bold bg-white/5 px-3 py-1 rounded-lg border border-white/5">
+                    ID: #{detailModalItem.item.id}
+                  </span>
+                </div>
+
+                {/* Info Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  {detailModalItem.type === 'event' ? (
+                    <>
+                      <div className="p-3.5 rounded-xl bg-white/5 border border-white/5">
+                        <p className="text-[10px] font-bold text-dark-muted uppercase">Ticket Price</p>
+                        <p className="text-base font-extrabold text-emerald-400 mt-0.5">₹{detailModalItem.item.price}</p>
+                      </div>
+                      <div className="p-3.5 rounded-xl bg-white/5 border border-white/5">
+                        <p className="text-[10px] font-bold text-dark-muted uppercase">Tickets Sold</p>
+                        <p className="text-base font-extrabold text-blue-400 mt-0.5">{detailModalItem.item.tickets_sold} / {detailModalItem.item.tickets_total}</p>
+                      </div>
+                      <div className="p-3.5 rounded-xl bg-white/5 border border-white/5">
+                        <p className="text-[10px] font-bold text-dark-muted uppercase">Date & Time</p>
+                        <p className="text-xs font-bold text-white mt-0.5">{detailModalItem.item.date} {detailModalItem.item.time}</p>
+                      </div>
+                      <div className="p-3.5 rounded-xl bg-white/5 border border-white/5">
+                        <p className="text-[10px] font-bold text-dark-muted uppercase">Gross Sales</p>
+                        <p className="text-base font-extrabold text-purple-400 mt-0.5">₹{(detailModalItem.item.price * (detailModalItem.item.tickets_sold || 0)).toLocaleString('en-IN')}</p>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="p-3.5 rounded-xl bg-white/5 border border-white/5">
+                        <p className="text-[10px] font-bold text-dark-muted uppercase">Rent Per Day</p>
+                        <p className="text-base font-extrabold text-emerald-400 mt-0.5">₹{detailModalItem.item.price_per_day}</p>
+                      </div>
+                      <div className="p-3.5 rounded-xl bg-white/5 border border-white/5">
+                        <p className="text-[10px] font-bold text-dark-muted uppercase">Capacity</p>
+                        <p className="text-base font-extrabold text-blue-400 mt-0.5">{detailModalItem.item.capacity} guests</p>
+                      </div>
+                      <div className="p-3.5 rounded-xl bg-white/5 border border-white/5">
+                        <p className="text-[10px] font-bold text-dark-muted uppercase">Venue Category</p>
+                        <p className="text-xs font-bold text-white mt-0.5">{detailModalItem.item.category || 'General Plot'}</p>
+                      </div>
+                      <div className="p-3.5 rounded-xl bg-white/5 border border-white/5">
+                        <p className="text-[10px] font-bold text-dark-muted uppercase">Location City</p>
+                        <p className="text-xs font-bold text-amber-400 mt-0.5">Ahmedabad, Gujarat</p>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Description */}
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-dark-muted">Full Description</h4>
+                  <p className="text-xs text-slate-300 leading-relaxed bg-white/5 p-4 rounded-2xl border border-white/5 whitespace-pre-wrap">
+                    {detailModalItem.item.description || 'No detailed description provided for this listing.'}
+                  </p>
+                </div>
+
+                {/* Venue Amenities if Venue */}
+                {detailModalItem.type === 'venue' && (
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-dark-muted">Available Amenities & Services</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {detailModalItem.item.has_catering && <span className="px-3 py-1 rounded-xl bg-emerald-500/10 text-emerald-400 text-xs font-bold border border-emerald-500/20">🍽️ Catering Available</span>}
+                      {detailModalItem.item.has_dj && <span className="px-3 py-1 rounded-xl bg-purple-500/10 text-purple-400 text-xs font-bold border border-purple-500/20">🎵 DJ System Available</span>}
+                      {detailModalItem.item.has_decoration && <span className="px-3 py-1 rounded-xl bg-pink-500/10 text-pink-400 text-xs font-bold border border-pink-500/20">✨ Decoration Package</span>}
+                      {detailModalItem.item.has_parking && <span className="px-3 py-1 rounded-xl bg-blue-500/10 text-blue-400 text-xs font-bold border border-blue-500/20">🅿️ Valet & Parking</span>}
+                    </div>
+                  </div>
+                )}
+
+                {/* Location & Address */}
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-dark-muted">Full Address & Location</h4>
+                  <div className="p-4 rounded-2xl bg-white/5 border border-white/5 flex items-start space-x-3">
+                    <MapPin className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+                    <p className="text-xs text-slate-200 font-medium">{detailModalItem.item.location}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer Action Buttons */}
+              <div className="p-4 sm:p-6 bg-slate-900 border-t border-white/10 flex flex-wrap items-center justify-between gap-3">
+                <button
+                  onClick={() => setDetailModalItem(null)}
+                  className="px-5 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-white font-bold text-xs transition-all"
+                >
+                  Close Preview
+                </button>
+
+                <div className="flex items-center space-x-3">
+                  {!detailModalItem.item.is_approved && (
+                    <button
+                      onClick={() => {
+                        if (detailModalItem.type === 'event') {
+                          handleEventApproval(detailModalItem.item.id, 'approve');
+                        } else {
+                          handleVenueApproval(detailModalItem.item.id, 'approve');
+                        }
+                        setDetailModalItem(null);
+                      }}
+                      className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs transition-all shadow-lg shadow-emerald-500/20"
+                    >
+                      Approve Listing
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => {
+                      if (detailModalItem.type === 'event') {
+                        handleEventDelete(detailModalItem.item.id);
+                      } else {
+                        handleVenueDelete(detailModalItem.item.id);
+                      }
+                      setDetailModalItem(null);
+                    }}
+                    className="px-5 py-2.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 font-bold text-xs transition-all"
+                  >
+                    Delete Listing
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Event Detail Modal Preview */}
+      {previewEvent && (
+        <EventDetailModal
+          event={previewEvent}
+          onClose={() => setPreviewEvent(null)}
+        />
+      )}
+
+      {/* Direct Message User Modal */}
+      <AnimatePresence>
+        {messageUserModal.show && messageUserModal.user && (
+          <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="glass-panel w-full max-w-2xl rounded-2xl p-6 shadow-2xl relative border border-white/10 space-y-4"
+            >
+              <div className="flex justify-between items-center border-b border-white/10 pb-3">
+                <div className="flex items-center space-x-2">
+                  <Mail className="w-5 h-5 text-blue-400" />
+                  <h3 className="text-sm font-bold text-dark-text uppercase tracking-wider">Send Direct Message</h3>
+                </div>
+                <button
+                  onClick={() => setMessageUserModal({ show: false, user: null, title: '', message: '', loading: false, error: '', success: '' })}
+                  className="text-dark-muted hover:text-dark-text"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="bg-white/5 border border-white/5 p-3.5 rounded-xl space-y-1">
+                <p className="text-[10px] text-dark-muted uppercase font-bold tracking-wider">Recipient User:</p>
+                <p className="text-xs font-bold text-white">{(messageUserModal.user.first_name || messageUserModal.user.last_name) ? `${messageUserModal.user.first_name || ''} ${messageUserModal.user.last_name || ''}`.trim() : (messageUserModal.user.username || messageUserModal.user.email)}</p>
+                <p className="text-[10px] text-blue-400 font-mono">{messageUserModal.user.email} • ({messageUserModal.user.role})</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+                {/* Left Column: Send Form */}
+                <form onSubmit={handleSendDirectMessage} className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-dark-muted uppercase tracking-wider mb-1.5">Subject / Title</label>
+                    <input
+                      type="text"
+                      value={messageUserModal.title}
+                      onChange={(e) => setMessageUserModal(prev => ({ ...prev, title: e.target.value }))}
+                      placeholder="Message Subject (e.g. Account Notice)"
+                      className="glass-input w-full px-3.5 py-2.5 rounded-xl text-xs text-white bg-dark-bg"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-dark-muted uppercase tracking-wider mb-1.5">Message Content *</label>
+                    <textarea
+                      required
+                      rows={4}
+                      value={messageUserModal.message}
+                      onChange={(e) => setMessageUserModal(prev => ({ ...prev, message: e.target.value }))}
+                      placeholder="Enter message to send directly to this user..."
+                      className="glass-input w-full px-3.5 py-2.5 rounded-xl text-xs text-white bg-dark-bg resize-none"
+                    />
+                  </div>
+
+                  {messageUserModal.error && (
+                    <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-xl text-xs font-semibold">
+                      {messageUserModal.error}
+                    </div>
+                  )}
+
+                  {messageUserModal.success && (
+                    <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 p-3 rounded-xl text-xs font-semibold">
+                      {messageUserModal.success}
+                    </div>
+                  )}
+
+                  <div className="flex space-x-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setMessageUserModal({ show: false, user: null, title: '', message: '', loading: false, error: '', success: '' })}
+                      className="flex-1 bg-white/5 border border-white/10 hover:bg-white/10 text-dark-text py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={messageUserModal.loading}
+                      className="flex-1 bg-blue-500 hover:bg-blue-600 text-white py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors disabled:opacity-50 flex items-center justify-center space-x-1.5"
+                    >
+                      {messageUserModal.loading ? 'Sending...' : 'Send Message'}
+                    </button>
+                  </div>
+                </form>
+
+                {/* Right Column: Sent Message History */}
+                <div className="flex flex-col h-full border-t md:border-t-0 md:border-l border-white/10 pt-4 md:pt-0 md:pl-6 space-y-3">
+                  <h4 className="text-xs font-bold text-dark-text uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-white/5">
+                    <History className="w-4 h-4 text-emerald-400" />
+                    Sent Messages History ({userMessageHistory.length})
+                  </h4>
+                  <div className="overflow-y-auto max-h-[290px] space-y-2 pr-1 custom-scrollbar">
+                    {loadingHistory ? (
+                      <div className="flex items-center justify-center py-12">
+                        <span className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></span>
+                      </div>
+                    ) : userMessageHistory.length === 0 ? (
+                      <p className="text-[10px] text-dark-muted text-center py-12">No previous direct messages sent to this user.</p>
+                    ) : (
+                      userMessageHistory.map((h) => (
+                        <div key={h.id} className="p-3 bg-white/[0.02] border border-white/5 rounded-xl space-y-1 text-left">
+                          <div className="flex justify-between items-start">
+                            <span className="text-[10px] font-bold text-emerald-400 font-sans line-clamp-1">{h.title}</span>
+                            <span className="text-[9px] text-dark-muted font-medium flex-shrink-0 ml-2">
+                              {new Date(h.created_at).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-dark-muted leading-relaxed whitespace-pre-wrap">{h.message}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+    </div>
+  );
+};
+
+export default AdminDashboard;
